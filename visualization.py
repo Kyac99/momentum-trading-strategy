@@ -127,43 +127,55 @@ def plot_position_evolution(long_portfolio, short_portfolio, tickers=None, figsi
     long_subset = long_portfolio[tickers]
     short_subset = short_portfolio[tickers]
     
-    # Calcul du nombre de positions par jour
+    # Calcul du nombre de positions à chaque date
     long_count = long_subset.sum(axis=1)
     short_count = short_subset.sum(axis=1)
     
     # Création de la figure
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=figsize, sharex=True)
+    fig, axes = plt.subplots(2, 1, figsize=figsize, sharex=True)
     
-    # Graphique pour les positions longues
-    long_subset.astype(int).plot(ax=ax1, stacked=True, colormap='viridis')
-    ax1.set_title('Évolution des Positions Longues', fontsize=14)
-    ax1.set_ylabel('Nombre de positions')
-    ax1.legend(loc='upper left', bbox_to_anchor=(1, 1))
+    # 1. Évolution du nombre de positions
+    ax1 = axes[0]
+    long_count.plot(ax=ax1, color='green', linewidth=2, label='Positions Longues')
+    short_count.plot(ax=ax1, color='red', linewidth=2, label='Positions Courtes')
+    ax1.set_title('Évolution du Nombre de Positions', fontsize=14)
+    ax1.set_ylabel('Nombre de Positions')
+    ax1.legend()
     ax1.grid(True, alpha=0.3)
     
-    # Graphique pour les positions courtes
-    short_subset.astype(int).plot(ax=ax2, stacked=True, colormap='plasma')
-    ax2.set_title('Évolution des Positions Courtes', fontsize=14)
-    ax2.set_ylabel('Nombre de positions')
-    ax2.set_xlabel('Date')
-    ax2.legend(loc='upper left', bbox_to_anchor=(1, 1))
-    ax2.grid(True, alpha=0.3)
+    # 2. Heatmap des positions par actif
+    ax2 = axes[1]
+    
+    # Combinaison des positions (1 pour long, -1 pour short, 0 pour pas de position)
+    combined = pd.DataFrame(0, index=long_subset.index, columns=tickers)
+    for date in combined.index:
+        for ticker in tickers:
+            if long_subset.loc[date, ticker]:
+                combined.loc[date, ticker] = 1
+            elif short_subset.loc[date, ticker]:
+                combined.loc[date, ticker] = -1
+    
+    # Création de la heatmap
+    sns.heatmap(combined, cmap='RdYlGn', center=0, ax=ax2)
+    ax2.set_title('Positions par Actif au Fil du Temps', fontsize=14)
+    ax2.set_ylabel('Date')
+    ax2.set_xlabel('Actif')
     
     plt.tight_layout()
     
     return fig
 
 
-def plot_momentum_heat_map(momentum_scores, window=30, figsize=(15, 10)):
+def plot_momentum_heatmap(momentum_scores, tickers=None, figsize=(15, 10)):
     """
-    Crée une heatmap des scores de momentum au fil du temps.
+    Visualise l'évolution des scores de momentum sous forme de heatmap.
     
     Parameters
     ----------
     momentum_scores : pandas.DataFrame
         Scores de momentum
-    window : int, optional
-        Fenêtre pour le calcul de la moyenne mobile
+    tickers : list, optional
+        Liste des tickers à inclure (si None, tous sont inclus)
     figsize : tuple, optional
         Taille de la figure
         
@@ -172,20 +184,22 @@ def plot_momentum_heat_map(momentum_scores, window=30, figsize=(15, 10)):
     matplotlib.figure.Figure
         Figure matplotlib
     """
-    # Création d'une moyenne mobile sur window jours pour lisser les scores
-    smoothed_scores = momentum_scores.rolling(window=window, min_periods=1).mean()
+    if tickers is None:
+        tickers = momentum_scores.columns
+    
+    # Sélection des tickers
+    scores_subset = momentum_scores[tickers]
     
     # Création de la figure
     fig, ax = plt.subplots(figsize=figsize)
     
     # Création de la heatmap
-    sns.heatmap(smoothed_scores.T, cmap='RdBu_r', center=0, 
-                robust=True, cbar_kws={'label': f'Momentum (moyenne mobile {window} jours)'}, 
-                ax=ax)
+    sns.heatmap(scores_subset, cmap='RdYlGn', center=0, ax=ax)
+    ax.set_title('Évolution des Scores de Momentum', fontsize=14)
+    ax.set_ylabel('Date')
+    ax.set_xlabel('Actif')
     
-    ax.set_title('Heatmap des Scores de Momentum', fontsize=14)
-    ax.set_ylabel('Ticker')
-    ax.set_xlabel('Date')
+    plt.tight_layout()
     
     return fig
 
@@ -217,26 +231,25 @@ def plot_correlation_matrix(returns, figsize=(12, 10)):
     cmap = sns.diverging_palette(230, 20, as_cmap=True)
     
     sns.heatmap(corr_matrix, mask=mask, cmap=cmap, vmax=1, vmin=-1, center=0,
-                annot=True, fmt='.2f', square=True, linewidths=.5, cbar_kws={'shrink': .5},
-                ax=ax)
+                square=True, linewidths=.5, cbar_kws={"shrink": .5}, ax=ax)
     
     ax.set_title('Matrice de Corrélation des Rendements', fontsize=14)
+    
+    plt.tight_layout()
     
     return fig
 
 
-def plot_momentum_vs_returns(momentum_scores, returns, ticker, figsize=(12, 6)):
+def plot_performance_metrics(metrics, benchmark_metrics=None, figsize=(12, 8)):
     """
-    Visualise la relation entre le momentum et les rendements futurs pour un actif spécifique.
+    Visualise les métriques de performance.
     
     Parameters
     ----------
-    momentum_scores : pandas.DataFrame
-        Scores de momentum
-    returns : pandas.DataFrame
-        Rendements des actifs
-    ticker : str
-        Symbole de l'actif à analyser
+    metrics : dict
+        Dictionnaire des métriques de performance
+    benchmark_metrics : dict, optional
+        Dictionnaire des métriques de performance du benchmark
     figsize : tuple, optional
         Taille de la figure
         
@@ -245,44 +258,43 @@ def plot_momentum_vs_returns(momentum_scores, returns, ticker, figsize=(12, 6)):
     matplotlib.figure.Figure
         Figure matplotlib
     """
-    # Sélection des données pour le ticker spécifié
-    common_dates = momentum_scores.index.intersection(returns.index)
-    m_scores = momentum_scores.loc[common_dates, ticker]
-    rets = returns.loc[common_dates, ticker]
+    # Préparation des données
+    metrics_df = pd.DataFrame({
+        'Stratégie': pd.Series(metrics)
+    })
+    
+    if benchmark_metrics is not None:
+        metrics_df['Benchmark'] = pd.Series(benchmark_metrics)
     
     # Création de la figure
     fig, ax = plt.subplots(figsize=figsize)
     
-    # Scatter plot avec une ligne de régression
-    sns.regplot(x=m_scores, y=rets, ax=ax, scatter_kws={'alpha': 0.5})
+    # Création du graphique à barres
+    metrics_df.plot(kind='bar', ax=ax)
+    ax.set_title('Métriques de Performance', fontsize=14)
+    ax.set_ylabel('Valeur')
+    ax.set_xticklabels(metrics_df.index, rotation=45)
+    ax.grid(True, alpha=0.3, axis='y')
     
-    # Calcul de la corrélation de Spearman
-    from scipy import stats
-    corr, pval = stats.spearmanr(m_scores, rets)
+    # Ajout des valeurs au-dessus des barres
+    for container in ax.containers:
+        ax.bar_label(container, fmt='%.4f', padding=3)
     
-    ax.set_title(f'Relation Momentum vs Rendements Futurs pour {ticker}\n'
-                 f'Corrélation de Spearman: {corr:.3f} (p-value: {pval:.3f})', fontsize=14)
-    ax.set_xlabel('Score de Momentum')
-    ax.set_ylabel('Rendement Futur')
-    ax.xaxis.set_major_formatter(FuncFormatter(format_percentage))
-    ax.yaxis.set_major_formatter(FuncFormatter(format_percentage))
-    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
     
     return fig
 
 
-def plot_return_contribution(strategy_returns, long_returns, short_returns, figsize=(15, 7)):
+def plot_rolling_performance(strategy_returns, window=252, figsize=(15, 15)):
     """
-    Visualise la contribution des positions longues et courtes aux rendements de la stratégie.
+    Visualise les métriques de performance sur une fenêtre glissante.
     
     Parameters
     ----------
     strategy_returns : pandas.Series
         Rendements de la stratégie
-    long_returns : pandas.Series
-        Rendements des positions longues
-    short_returns : pandas.Series
-        Rendements des positions courtes
+    window : int, optional
+        Taille de la fenêtre glissante (en jours)
     figsize : tuple, optional
         Taille de la figure
         
@@ -291,35 +303,46 @@ def plot_return_contribution(strategy_returns, long_returns, short_returns, figs
     matplotlib.figure.Figure
         Figure matplotlib
     """
-    # Création d'un DataFrame avec toutes les séries
-    contribution_df = pd.DataFrame({
-        'Stratégie': strategy_returns,
-        'Positions Longues': long_returns,
-        'Positions Courtes': -short_returns  # Négatif car les positions courtes contribuent négativement
-    })
-    
-    # Calcul des rendements cumulatifs
-    cum_contribution = (1 + contribution_df).cumprod()
+    # Calcul des métriques glissantes
+    rolling_return = strategy_returns.rolling(window=window).mean() * 252  # Annualisation
+    rolling_vol = strategy_returns.rolling(window=window).std() * np.sqrt(252)  # Annualisation
+    rolling_sharpe = rolling_return / rolling_vol
+    rolling_drawdown = (1 + strategy_returns).cumprod().rolling(window=window).apply(
+        lambda x: (x / x.cummax() - 1).min(), raw=True)
     
     # Création de la figure
-    fig, axes = plt.subplots(2, 1, figsize=figsize, sharex=True)
+    fig, axes = plt.subplots(4, 1, figsize=figsize, sharex=True)
     
-    # Rendements cumulatifs
-    cum_contribution.plot(ax=axes[0], linewidth=2)
-    axes[0].set_title('Contribution aux Rendements Cumulatifs', fontsize=14)
-    axes[0].set_ylabel('Rendement Cumulatif')
-    axes[0].yaxis.set_major_formatter(FuncFormatter(format_percentage))
-    axes[0].grid(True, alpha=0.3)
-    axes[0].legend()
+    # 1. Rendement annualisé glissant
+    ax1 = axes[0]
+    rolling_return.plot(ax=ax1, color='blue', linewidth=2)
+    ax1.set_title('Rendement Annualisé Glissant', fontsize=14)
+    ax1.yaxis.set_major_formatter(FuncFormatter(format_percentage))
+    ax1.set_ylabel('Rendement')
+    ax1.grid(True, alpha=0.3)
     
-    # Rendements mensuels
-    monthly_contribution = contribution_df.resample('M').sum()
-    monthly_contribution.plot(kind='bar', ax=axes[1])
-    axes[1].set_title('Contribution aux Rendements Mensuels', fontsize=14)
-    axes[1].set_ylabel('Rendement')
-    axes[1].yaxis.set_major_formatter(FuncFormatter(format_percentage))
-    axes[1].grid(True, alpha=0.3, axis='y')
-    axes[1].legend()
+    # 2. Volatilité annualisée glissante
+    ax2 = axes[1]
+    rolling_vol.plot(ax=ax2, color='orange', linewidth=2)
+    ax2.set_title('Volatilité Annualisée Glissante', fontsize=14)
+    ax2.yaxis.set_major_formatter(FuncFormatter(format_percentage))
+    ax2.set_ylabel('Volatilité')
+    ax2.grid(True, alpha=0.3)
+    
+    # 3. Ratio de Sharpe glissant
+    ax3 = axes[2]
+    rolling_sharpe.plot(ax=ax3, color='green', linewidth=2)
+    ax3.set_title('Ratio de Sharpe Glissant', fontsize=14)
+    ax3.set_ylabel('Ratio de Sharpe')
+    ax3.grid(True, alpha=0.3)
+    
+    # 4. Drawdown maximal glissant
+    ax4 = axes[3]
+    rolling_drawdown.plot(ax=ax4, color='red', linewidth=2)
+    ax4.set_title('Drawdown Maximal Glissant', fontsize=14)
+    ax4.yaxis.set_major_formatter(FuncFormatter(format_percentage))
+    ax4.set_ylabel('Drawdown')
+    ax4.grid(True, alpha=0.3)
     
     plt.tight_layout()
     
@@ -334,17 +357,12 @@ if __name__ == "__main__":
     # Téléchargement de données pour l'exemple
     end_date = datetime.now().strftime('%Y-%m-%d')
     start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
-    tickers = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META']
+    spy_data = yf.download('SPY', start=start_date, end=end_date)['Close']
     
-    # Données de prix
-    prices = yf.download(tickers, start=start_date, end=end_date)['Adj Close']
+    # Création de rendements fictifs pour la démonstration
+    returns = spy_data.pct_change().dropna()
+    strategy_returns = returns * 1.2  # Stratégie fictive surperformant de 20%
     
-    # Calcul des rendements
-    returns = prices.pct_change().dropna()
-    
-    # Exemple de rendements de stratégie (fictifs pour cet exemple)
-    strategy_returns = returns.mean(axis=1)
-    
-    # Visualisation de la performance
-    fig = plot_strategy_performance(strategy_returns)
+    # Visualisation des performances
+    fig = plot_strategy_performance(strategy_returns, returns)
     plt.show()
